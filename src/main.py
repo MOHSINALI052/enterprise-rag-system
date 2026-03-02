@@ -1,29 +1,23 @@
 # ==========================================================
-# PROJECT: Enterprise-Level RAG System (Document AI)
+# PROJECT: Enterprise-Level RAG System (Document AI) - CHATBOT
 # ==========================================================
 # FLOW:
-# 1) Load .env (API key)
-# 2) Read PDF (PyMuPDF)
-# 3) Chunk text
-# 4) Create embeddings (SentenceTransformers)
-# 5) Build FAISS index
-# 6) Retrieve top-k chunks for a query
-# 7) Send context + query to OpenAI (Generation)
+# 1) Read PDF (PyMuPDF)
+# 2) Chunk text
+# 3) Create embeddings (SentenceTransformers)
+# 4) Build FAISS index
+# 5) Interactive chatbot:
+#       user question -> FAISS retrieval -> context -> Ollama Mistral -> answer
 # ==========================================================
 
 
 # ==========================================================
-# TOPIC: Load Environment Variables (.env) using python-dotenv
+# TOPIC: (Optional) Load Environment Variables (.env)
 # YouTube search: "python dotenv load env variables"
+# NOTE: Ollama ke liye API key zaroori nahi.
 # ==========================================================
 from dotenv import load_dotenv
-import os
-
-load_dotenv()  # This loads .env from project root (where you run python)
-
-# DEBUG (optional): Check first few chars of key
-# If this prints empty, your .env isn't loading correctly.
-print("KEY CHECK:", (os.getenv("OPENAI_API_KEY") or "")[:10])
+load_dotenv()
 
 
 # ==========================================================
@@ -32,7 +26,7 @@ print("KEY CHECK:", (os.getenv("OPENAI_API_KEY") or "")[:10])
 # ==========================================================
 import fitz  # PyMuPDF
 
-pdf_path = "data/entire-vw-ar24.pdf"  # Your PDF path in data/ folder
+pdf_path = "data/entire-vw-ar24.pdf"  # PDF path in data/ folder
 
 doc = fitz.open(pdf_path)
 full_text = ""
@@ -65,8 +59,8 @@ def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200):
     while start < text_length:
         end = start + chunk_size
         chunks.append(text[start:end])
-        start = end - chunk_overlap
 
+        start = end - chunk_overlap
         if start < 0:
             start = 0
 
@@ -113,83 +107,93 @@ print("Total vectors in index:", index.ntotal)
 
 
 # ==========================================================
-# TOPIC: Retrieval (Top-K similar chunks)
+# TOPIC: Interactive RAG Chatbot (FAISS + Ollama Mistral)
+# YouTube search: "RAG chatbot python faiss ollama"
 # ==========================================================
-query = "Electric vehicle sales performance in 2024"
-
-query_embedding = embed_model.encode([query])
-query_embedding = np.array(query_embedding)
-
-k = 5
-distances, indices = index.search(query_embedding, k)
-
-print("\nTop matching chunks (retrieval results):\n")
-for i, idx in enumerate(indices[0]):
-    print(f"\nResult {i+1} (chunk index: {idx}):")
-    print(chunks[idx][:500])
-    print("----------")
-
-
-# ==========================================================
-# TOPIC: RAG Prompting (Grounded Answer Generation)
-# YouTube search: "RAG prompt template reduce hallucination"
-# ==========================================================
-context = "\n\n".join([chunks[idx] for idx in indices[0]])
-
-prompt = f"""
-You are a helpful assistant.
-Answer the question ONLY using the CONTEXT below.
-If the answer is not in the context, say: "I don't know based on the provided document."
-
-CONTEXT:
-{context}
-
-QUESTION:
-{query}
-
-ANSWER:
-""".strip()
-
-
-# ==========================================================
-# TOPIC: Local LLM Generation using Ollama (Mistral)
-# YouTube search: "ollama api generate python"
-# ==========================================================
-
 import requests
-import json
 
-# Build context from retrieved chunks
-context = "\n\n".join([chunks[idx] for idx in indices[0]])
-
-# Strict prompt to reduce hallucination
-prompt = f"""
-You are a helpful assistant.
-Answer the question ONLY using the CONTEXT below.
-If the answer is not in the context, say: "I don't know based on the provided document."
-
-CONTEXT:
-{context}
-
-QUESTION:
-{query}
-
-ANSWER:
-""".strip()
-
-# Ollama local API endpoint
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
-payload = {
-    "model": "mistral",      # local model name
-    "prompt": prompt,
-    "stream": False          # full response ek saath
-}
+print("\n================ RAG CHATBOT READY (Ollama) ================\n")
+print("Type 'exit' to quit.\n")
 
-print("\n================ FINAL RAG ANSWER (Ollama) ================\n")
 
-response = requests.post(OLLAMA_URL, json=payload)
-response.raise_for_status()
+while True:
+    # ----------------------------------------------------------
+    # TOPIC: User Input in Python
+    # YouTube search: "python input function"
+    # ----------------------------------------------------------
+    query = input("Ask a question (or type 'exit'): ").strip()
 
-data = response.json()
-print(data["response"])
+    if query.lower() == "exit":
+        print("\nExiting chatbot... Bye!")
+        break
+
+    if not query:
+        print("Please type a question.\n")
+        continue
+
+    # ----------------------------------------------------------
+    # TOPIC: Convert query into embedding
+    # YouTube search: "sentence transformer encode query"
+    # ----------------------------------------------------------
+    query_embedding = embed_model.encode([query])
+    query_embedding = np.array(query_embedding)
+
+    # ----------------------------------------------------------
+    # TOPIC: FAISS Similarity Search (Top-K)
+    # YouTube search: "faiss index search top k"
+    # ----------------------------------------------------------
+    k = 5
+    distances, indices = index.search(query_embedding, k)
+
+    # ----------------------------------------------------------
+    # TOPIC: Build context from retrieved chunks
+    # YouTube search: "RAG context building"
+    # ----------------------------------------------------------
+    context = "\n\n".join([chunks[idx] for idx in indices[0]])
+
+    # OPTIONAL: context limit (speed + better answers)
+    context = context[:4000]
+
+    # ----------------------------------------------------------
+    # TOPIC: RAG Prompt Template
+    # YouTube search: "RAG prompt template reduce hallucination"
+    # ----------------------------------------------------------
+    prompt = f"""
+You are a helpful assistant.
+Answer the question ONLY using the CONTEXT below.
+If the answer is not in the context, say: "I don't know based on the provided document."
+
+CONTEXT:
+{context}
+
+QUESTION:
+{query}
+
+ANSWER:
+""".strip()
+
+    # ----------------------------------------------------------
+    # TOPIC: Call Ollama Local API (Mistral)
+    # YouTube search: "ollama api generate python"
+    # ----------------------------------------------------------
+    payload = {
+        "model": "mistral",
+        "prompt": prompt,
+        "stream": False
+    }
+
+    try:
+        response = requests.post(OLLAMA_URL, json=payload, timeout=300)
+        response.raise_for_status()
+        data = response.json()
+
+        print("\n---------------- ANSWER ----------------\n")
+        print(data.get("response", "").strip())
+        print("\n----------------------------------------\n")
+
+    except requests.exceptions.RequestException as e:
+        print("\n❌ Ollama request failed. Check if Ollama is running.")
+        print("Try:  ollama run mistral")
+        print("Error:", e, "\n")
